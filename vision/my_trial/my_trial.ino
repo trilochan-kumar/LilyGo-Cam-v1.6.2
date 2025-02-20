@@ -9,8 +9,6 @@
      - Sends a follow-up message (asking for a behavior analysis)
      - Prints that response
      - Repeats after a delay
-     
-  Do not change the implementation of the Gemini functions.
 */
 
 #define CAMERA_MODEL_TTGO_T_CAMERA_V162  // Board model for TTGO T-Camera V1.6.2
