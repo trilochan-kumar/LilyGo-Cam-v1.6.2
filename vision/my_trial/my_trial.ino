@@ -1,266 +1,295 @@
-// =======================================================
-// IMPORTANT: Define your board model BEFORE any includes!
-// In this example, we are using TTGO T-CAMERA V1.6.2.
-// If you are using a different board, change the macro accordingly.
-#define CAMERA_MODEL_TTGO_T_CAMERA_V162
+/*
+  Combined Minimal Code for TTGO T-Camera V1.6.2
+  ------------------------------------------------
+  1. Initializes WiFi and the camera (using select_pins.h)
+  2. In loop():
+     - Captures a frame and sends it to Gemini Vision API with the prompt
+       "Please analyze the image content"
+     - Receives and prints the Gemini response
+     - Sends a follow-up message (asking for a behavior analysis)
+     - Prints that response
+     - Repeats after a delay
+     
+  Do not change the implementation of the Gemini functions.
+*/
 
+#define CAMERA_MODEL_TTGO_T_CAMERA_V162  // Board model for TTGO T-Camera V1.6.2
+#include "select_pins.h"
+
+#include "esp_camera.h"
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
+#include "Base64.h"
 #include <ArduinoJson.h>
-#include "Base64.h"         // Make sure you have an appropriate Base64 library installed.
-#include "esp_camera.h"
-#include "select_pins.h"      // This file uses the macro defined above to select your board
+#include <Arduino.h>
 
-// --- WiFi and Gemini Vision credentials ---
-#define WIFI_SSID    "2o25"
-#define WIFI_PASS    "19o82oo2"
-String gemini_Key = "AIzaSyA7o-ItgG5ZCnYWIocnhMPJMuaWrBwp6fg";  // Replace with your actual API key
+//––– WiFi and Gemini Credentials –––
+char wifi_ssid[] = "2o25";
+char wifi_pass[] = "19o82oo2";
+String gemini_Key = "AIzaSyA7o-ItgG5ZCnYWIocnhMPJMuaWrBwp6fg";
 
-// --- Forward declarations ---
-bool setupCamera();
-String SendStillToGeminiVision(String key, String prompt);
-String SendMessageToGemini(String key, String behaviorInstruction, String previousResponse);
+//––– WiFi Initialization Function –––
+void initWiFi() {
+  for (int i = 0; i < 2; i++) {
+    WiFi.begin(wifi_ssid, wifi_pass);
+    delay(1000);
+    Serial.println("");
+    Serial.print("Connecting to ");
+    Serial.println(wifi_ssid);
 
+    long int StartTime = millis();
+    while (WiFi.status() != WL_CONNECTED) {
+      delay(500);
+      if ((StartTime + 5000) < millis()) break;
+    }
+    if (WiFi.status() == WL_CONNECTED) {
+      Serial.println("");
+      Serial.println("STA IP address:");
+      Serial.println(WiFi.localIP());
+      Serial.println("");
+      break;
+    }
+  }
+}
+
+//––– Gemini Vision Function –––
+String SendStillToGeminiVision(String key, String message) {
+  WiFiClientSecure client_tcp;
+  client_tcp.setInsecure();
+  const char* myDomain = "generativelanguage.googleapis.com";
+  Serial.println("Connect to " + String(myDomain));
+  String getResponse = "", Feedback = "";
+  if (client_tcp.connect(myDomain, 443)) {
+    Serial.println("Connection successful");
+    
+    // Capture a frame from the camera:
+    camera_fb_t *fb = esp_camera_fb_get();
+    if (!fb) {
+      Serial.println("Camera capture failed");
+      delay(1000);
+      ESP.restart();
+      return "Camera capture failed";
+    }
+    
+    char *input = (char *)fb->buf;
+    char output[base64_enc_len(3)];
+    String imageFile = "";
+    // Encode the image to base64 (implementation left unchanged)
+    for (int i = 0; i < fb->len; i++) {
+      base64_encode(output, (input++), 3);
+      if (i % 3 == 0) imageFile += String(output);
+    }
+    
+    String Data = "{\"contents\": [{\"parts\": [{ \"text\": \"" + message +
+                  "\"}, {\"inline_data\": {\"mime_type\": \"image/jpeg\", \"data\": \"" +
+                  imageFile + "\"}}]}]}";
+    
+    client_tcp.println("POST /v1beta/models/gemini-1.5-flash-latest:generateContent?key=" + key + " HTTP/1.1");
+    client_tcp.println("Connection: close");
+    client_tcp.println("Host: " + String(myDomain));
+    client_tcp.println("Content-Type: application/json; charset=utf-8");
+    client_tcp.println("Content-Length: " + String(Data.length()));
+    client_tcp.println("Connection: close");
+    client_tcp.println();
+    
+    for (int Index = 0; Index < Data.length(); Index += 1024) {
+      client_tcp.print(Data.substring(Index, Index + 1024));
+    }
+    esp_camera_fb_return(fb);
+    
+    int waitTime = 10000;
+    long startTime = millis();
+    boolean state = false;
+    boolean markState = false;
+    while ((startTime + waitTime) > millis()) {
+      Serial.print(".");
+      delay(100);
+      while (client_tcp.available()) {
+        char c = client_tcp.read();
+        if (String(c) == "{") markState = true;
+        if (state == true && markState == true) Feedback += String(c);
+        if (c == '\n') {
+          if (getResponse.length() == 0) state = true;
+          getResponse = "";
+        } else if (c != '\r') {
+          getResponse += String(c);
+        }
+        startTime = millis();
+      }
+      if (Feedback.length() > 0) break;
+    }
+    client_tcp.stop();
+    Serial.println("");
+    
+    DynamicJsonDocument doc(1024);
+    deserializeJson(doc, Feedback);
+    JsonObject obj = doc.as<JsonObject>();
+    getResponse = obj["candidates"][0]["content"]["parts"][0]["text"].as<String>();
+    if (getResponse == "null")
+      getResponse = obj["error"]["message"].as<String>();
+  } else {
+    getResponse = "Connected to " + String(myDomain) + " failed.";
+    Serial.println("Connected to " + String(myDomain) + " failed.");
+  }
+  
+  return getResponse;
+}
+
+//––– Gemini Chat Function –––
+String SendMessageToGemini(String key, String behavior, String message) {
+  WiFiClientSecure client_tcp;
+  client_tcp.setInsecure();
+  const char* myDomain = "generativelanguage.googleapis.com";
+  Serial.println("Connect to " + String(myDomain));
+  String getResponse = "", Feedback = "";
+  if (client_tcp.connect(myDomain, 443)) {
+    Serial.println("Connection successful");
+    
+    String Data = "{\"contents\": [{\"parts\":[{\"text\": \"" + behavior +
+                  "\"}, {\"text\": \"" + message + "\"}]}]}";
+    
+    client_tcp.println("POST /v1beta/models/gemini-1.5-flash-latest:generateContent?key=" + key + " HTTP/1.1");
+    client_tcp.println("Connection: close");
+    client_tcp.println("Host: " + String(myDomain));
+    client_tcp.println("Content-Type: application/json; charset=utf-8");
+    client_tcp.println("Content-Length: " + String(Data.length()));
+    client_tcp.println("Connection: close");
+    client_tcp.println();
+    
+    for (int Index = 0; Index < Data.length(); Index += 1024) {
+      client_tcp.print(Data.substring(Index, Index + 1024));
+    }
+    
+    int waitTime = 10000;
+    long startTime = millis();
+    boolean state = false;
+    boolean markState = false;
+    while ((startTime + waitTime) > millis()) {
+      Serial.print(".");
+      delay(100);
+      while (client_tcp.available()) {
+        char c = client_tcp.read();
+        if (String(c) == "{") markState = true;
+        if (state == true && markState == true) Feedback += String(c);
+        if (c == '\n') {
+          if (getResponse.length() == 0) state = true;
+          getResponse = "";
+        } else if (c != '\r') {
+          getResponse += String(c);
+        }
+        startTime = millis();
+      }
+      if (Feedback.length() > 0) break;
+    }
+    client_tcp.stop();
+    Serial.println("");
+    Serial.println(Feedback);
+    
+    DynamicJsonDocument doc(1024);
+    deserializeJson(doc, Feedback);
+    JsonObject obj = doc.as<JsonObject>();
+    getResponse = obj["candidates"][0]["content"]["parts"][0]["text"].as<String>();
+    if (getResponse == "null")
+      getResponse = obj["error"]["message"].as<String>();
+  } else {
+    getResponse = "Connected to " + String(myDomain) + " failed.";
+    Serial.println("Connected to " + String(myDomain) + " failed.");
+  }
+  
+  return getResponse;
+}
+
+//––– Setup –––
 void setup() {
   Serial.begin(115200);
   delay(1000);
   
-  // --- Connect to WiFi ---
-  Serial.println("Connecting to WiFi...");
-  WiFi.begin(WIFI_SSID, WIFI_PASS);
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
-  }
-  Serial.println();
-  Serial.print("WiFi connected, IP address: ");
-  Serial.println(WiFi.localIP().toString());
+  // Disable brown-out detection for stability.
+  // WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);
   
-  // --- Initialize the camera ---
-  if (!setupCamera()) {
-    Serial.println("Camera initialization failed. Restarting...");
-    delay(1000);
-    ESP.restart();
-  }
-  Serial.println("Camera initialized successfully.");
+  // Initialize WiFi.
+  initWiFi();
   
-  delay(2000); // Allow the sensor to settle
-  
-  // --- First Gemini Vision request: capture image and ask for analysis ---
-  String analysisPrompt = "Please analyze the image content";
-  String analysisResponse = SendStillToGeminiVision(gemini_Key, analysisPrompt);
-  Serial.println("\nGemini Vision Analysis Response:");
-  Serial.println(analysisResponse);
-
-  // --- Second Gemini Vision request: ask for behavior decision based on the analysis ---
-  String behaviorInstruction = "Please follow these guidelines: (1) If people are present, return '1'. (2) If not, return '0'. (3) If it cannot be determined, return '-1'. Do not include any extra explanation.";
-  String behaviorResponse = SendMessageToGemini(gemini_Key, behaviorInstruction, analysisResponse);
-  Serial.println("\nGemini Vision Behavior Response:");
-  Serial.println(behaviorResponse);
-}
-
-void loop() {
-  // In this example the Gemini Vision process runs once in setup().
-  // You can add code here to re-run the capture/analysis process periodically or on a button press.
-  delay(60000);  // Wait one minute (or adjust as needed)
-}
-
-// =======================================================
-// Gemini Vision function: capture image, base64-encode it, and send the image with a prompt.
-String SendStillToGeminiVision(String key, String prompt) {
-  WiFiClientSecure client;
-  client.setInsecure();  // For testing only—disables certificate validation
-  const char* host = "generativelanguage.googleapis.com";
-
-  Serial.println("\n[SendStillToGeminiVision] Connecting to " + String(host) + "...");
-  if (!client.connect(host, 443)) {
-    Serial.println("Connection failed");
-    return "Connection failed";
-  }
-  Serial.println("Connected.");
-
-  // --- Capture an image from the camera ---
-  camera_fb_t *fb = esp_camera_fb_get();
-  if (!fb) {
-    Serial.println("Camera capture failed");
-    return "Camera capture failed";
-  }
-
-  // --- Base64-encode the JPEG image ---
-  int encodedLen = base64_enc_len(fb->len);
-  char *encodedImg = (char *)malloc(encodedLen + 1);
-  if (!encodedImg) {
-    Serial.println("Memory allocation for base64 encoding failed");
-    esp_camera_fb_return(fb);
-    return "Memory allocation failed";
-  }
-  base64_encode(encodedImg, (char *)fb->buf, fb->len);
-  String imageData = String(encodedImg);
-  free(encodedImg);
-  esp_camera_fb_return(fb);
-
-  // --- Construct the JSON payload ---
-  String payload = "{\"contents\": [{\"parts\": [{ \"text\": \"" + prompt + "\"}, {\"inline_data\": {\"mime_type\": \"image/jpeg\", \"data\": \"" + imageData + "\"}}]}]}";
-  
-  // --- Build the HTTP POST request ---
-  String request = "POST /v1beta/models/gemini-1.5-flash-latest:generateContent?key=" + key + " HTTP/1.1\r\n";
-  request += "Host: " + String(host) + "\r\n";
-  request += "Content-Type: application/json; charset=utf-8\r\n";
-  request += "Content-Length: " + String(payload.length()) + "\r\n";
-  request += "Connection: close\r\n\r\n";
-  request += payload;
-
-  client.print(request);
-  Serial.println("\n[SendStillToGeminiVision] Request sent:");
-  Serial.println(request);
-
-  // --- Read the HTTP response ---
-  String response = "";
-  long timeout = millis() + 10000;
-  while (client.connected() && millis() < timeout) {
-    while (client.available()) {
-      char c = client.read();
-      response += c;
-    }
-  }
-  client.stop();
-  Serial.println("\n[SendStillToGeminiVision] Full response:");
-  Serial.println(response);
-
-  // --- Extract JSON from the HTTP response (skip headers) ---
-  int jsonStart = response.indexOf("{");
-  String jsonResponse = (jsonStart != -1) ? response.substring(jsonStart) : "";
-  
-  // --- Parse JSON using ArduinoJson ---
-  DynamicJsonDocument doc(2048);
-  DeserializationError error = deserializeJson(doc, jsonResponse);
-  if (error) {
-    Serial.print("JSON parse error: ");
-    Serial.println(error.c_str());
-    return "JSON parse error";
-  }
-  
-  String result = doc["candidates"][0]["content"]["parts"][0]["text"].as<String>();
-  if (result == "null" || result == "") {
-    result = doc["error"]["message"].as<String>();
-  }
-  
-  return result;
-}
-
-// =======================================================
-// Gemini Vision function: send a message (behavior instruction) and the previous reply.
-String SendMessageToGemini(String key, String behaviorInstruction, String previousResponse) {
-  WiFiClientSecure client;
-  client.setInsecure();
-  const char* host = "generativelanguage.googleapis.com";
-
-  Serial.println("\n[SendMessageToGemini] Connecting to " + String(host) + "...");
-  if (!client.connect(host, 443)) {
-    Serial.println("Connection failed");
-    return "Connection failed";
-  }
-  Serial.println("Connected.");
-
-  // --- Construct the JSON payload ---
-  String payload = "{\"contents\": [{\"parts\": [{\"text\": \"" + behaviorInstruction + "\"}, {\"text\": \"" + previousResponse + "\"}]}]}";
-  
-  // --- Build the HTTP POST request ---
-  String request = "POST /v1beta/models/gemini-1.5-flash-latest:generateContent?key=" + key + " HTTP/1.1\r\n";
-  request += "Host: " + String(host) + "\r\n";
-  request += "Content-Type: application/json; charset=utf-8\r\n";
-  request += "Content-Length: " + String(payload.length()) + "\r\n";
-  request += "Connection: close\r\n\r\n";
-  request += payload;
-
-  client.print(request);
-  Serial.println("\n[SendMessageToGemini] Request sent:");
-  Serial.println(request);
-
-  // --- Read the HTTP response ---
-  String response = "";
-  long timeout = millis() + 10000;
-  while (client.connected() && millis() < timeout) {
-    while (client.available()) {
-      char c = client.read();
-      response += c;
-    }
-  }
-  client.stop();
-  Serial.println("\n[SendMessageToGemini] Full response:");
-  Serial.println(response);
-
-  // --- Extract JSON from the HTTP response ---
-  int jsonStart = response.indexOf("{");
-  String jsonResponse = (jsonStart != -1) ? response.substring(jsonStart) : "";
-  
-  // --- Parse JSON using ArduinoJson ---
-  DynamicJsonDocument doc(2048);
-  DeserializationError error = deserializeJson(doc, jsonResponse);
-  if (error) {
-    Serial.print("JSON parse error: ");
-    Serial.println(error.c_str());
-    return "JSON parse error";
-  }
-  
-  String result = doc["candidates"][0]["content"]["parts"][0]["text"].as<String>();
-  if (result == "null" || result == "") {
-    result = doc["error"]["message"].as<String>();
-  }
-  
-  return result;
-}
-
-// =======================================================
-// Camera initialization function
-// This function uses the pin definitions provided by "select_pins.h"
-bool setupCamera() {
+  // ---- Camera Configuration (using TTGO T-Camera V1.6.2 pin definitions) ----
   camera_config_t config;
   config.ledc_channel = LEDC_CHANNEL_0;
-  config.ledc_timer = LEDC_TIMER_0;
-  config.pin_d0 = Y2_GPIO_NUM;
-  config.pin_d1 = Y3_GPIO_NUM;
-  config.pin_d2 = Y4_GPIO_NUM;
-  config.pin_d3 = Y5_GPIO_NUM;
-  config.pin_d4 = Y6_GPIO_NUM;
-  config.pin_d5 = Y7_GPIO_NUM;
-  config.pin_d6 = Y8_GPIO_NUM;
-  config.pin_d7 = Y9_GPIO_NUM;
-  config.pin_xclk = XCLK_GPIO_NUM;
-  config.pin_pclk = PCLK_GPIO_NUM;
-  config.pin_vsync = VSYNC_GPIO_NUM;
-  config.pin_href = HREF_GPIO_NUM;
-  config.pin_sscb_sda = SIOD_GPIO_NUM;
-  config.pin_sscb_scl = SIOC_GPIO_NUM;
-  config.pin_pwdn = PWDN_GPIO_NUM;
-  config.pin_reset = RESET_GPIO_NUM;
+  config.ledc_timer   = LEDC_TIMER_0;
+  
+  // Use pin definitions from select_pins.h:
+  config.pin_d0       = Y2_GPIO_NUM;
+  config.pin_d1       = Y3_GPIO_NUM;
+  config.pin_d2       = Y4_GPIO_NUM;
+  config.pin_d3       = Y5_GPIO_NUM;
+  config.pin_d4       = Y6_GPIO_NUM;
+  config.pin_d5       = Y7_GPIO_NUM;
+  config.pin_d6       = Y8_GPIO_NUM;
+  config.pin_d7       = Y9_GPIO_NUM;
+  config.pin_xclk     = XCLK_GPIO_NUM;
+  config.pin_pclk     = PCLK_GPIO_NUM;
+  config.pin_vsync    = VSYNC_GPIO_NUM;
+  config.pin_href     = HREF_GPIO_NUM;
+  config.pin_sccb_sda = SIOD_GPIO_NUM;
+  config.pin_sccb_scl = SIOC_GPIO_NUM;
+  config.pin_pwdn     = PWDN_GPIO_NUM;
+  config.pin_reset    = RESET_GPIO_NUM;
+  
   config.xclk_freq_hz = 20000000;
   config.pixel_format = PIXFORMAT_JPEG;
   
+  // Use higher resolution if PSRAM is available.
   if (psramFound()) {
-    config.frame_size = FRAMESIZE_UXGA;
+    config.frame_size   = FRAMESIZE_UXGA;
     config.jpeg_quality = 10;
-    config.fb_count = 2;
+    config.fb_count     = 2;
+    config.fb_location  = CAMERA_FB_IN_PSRAM;
   } else {
-    config.frame_size = FRAMESIZE_SVGA;
+    config.frame_size   = FRAMESIZE_SVGA;
     config.jpeg_quality = 12;
-    config.fb_count = 1;
+    config.fb_count     = 1;
+    config.fb_location  = CAMERA_FB_IN_DRAM;
   }
   
   esp_err_t err = esp_camera_init(&config);
   if (err != ESP_OK) {
     Serial.printf("Camera init failed with error 0x%x\n", err);
-    return false;
+    delay(1000);
+    ESP.restart();
   }
-  sensor_t *s = esp_camera_sensor_get();
-  // Adjust sensor settings if needed (for example, for OV3660)
+  Serial.println("Camera init succeeded");
+  
+  // Optional sensor adjustments.
+  sensor_t * s = esp_camera_sensor_get();
   if (s->id.PID == OV3660_PID) {
     s->set_vflip(s, 1);
     s->set_brightness(s, 1);
     s->set_saturation(s, -2);
   }
-  // Optionally change the frame size further:
+  // Set frame size to CIF (352x288) for Gemini Vision compatibility.
   s->set_framesize(s, FRAMESIZE_CIF);
   
-  return true;
+  // Wait a few seconds before entering the loop.
+  delay(5000);
+}
+
+//––– Loop –––
+void loop() {
+  String response = "";
+  String gemini_Chat = "Give what is in the image in ten words";
+  
+  // Capture a frame and send it to Gemini Vision API.
+  response = SendStillToGeminiVision(gemini_Key, gemini_Chat);
+  Serial.print("Gemini Vision Response:\t");
+  Serial.println(response);
+  
+  // Prepare a follow-up message using guidelines.
+  String gemini_behavior = "Please follow the guidelines: (1) If the scenario description indicates the presence of people, return '1'. (2) If the scenario description indicates there are no people, return '0'. (3) If it cannot be determined, return '-1'. (4) Do not provide additional explanations.";
+  gemini_Chat = response;
+  
+  // Send a follow-up message to Gemini API.
+  //response = SendMessageToGemini(gemini_Key, gemini_behavior, gemini_Chat);
+  //Serial.println("Gemini Chat Response:");
+  //Serial.println(response);
+  
+  // Wait 10 seconds before capturing the next frame.
+  delay(5000);
 }
