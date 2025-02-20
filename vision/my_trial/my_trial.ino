@@ -24,9 +24,9 @@
 #include <Arduino.h>
 
 //––– WiFi and Gemini Credentials –––
-char wifi_ssid[] = "2o25";
-char wifi_pass[] = "19o82oo2";
-String gemini_Key = "AIzaSyA7o-ItgG5ZCnYWIocnhMPJMuaWrBwp6fg";
+char wifi_ssid[] = "SSID";
+char wifi_pass[] = "Password";
+String gemini_Key = "Gemini_API_Key";
 
 //––– WiFi Initialization Function –––
 void initWiFi() {
