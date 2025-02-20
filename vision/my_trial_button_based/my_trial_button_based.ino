@@ -1,7 +1,4 @@
 /*
-  Revised Code for TTGO T-Camera V1.6.2 with Button-Triggered Gemini Vision API Call
-  (Now with a custom Base64 encoder)
-
   When the button (pin 15, internal pull‑up) is pressed, the board:
     1. Captures an image.
     2. Sends it to Gemini Vision with the prompt "Describe the image in 5-10 words."
@@ -17,9 +14,9 @@
 #include <Arduino.h>
 
 //––––– WiFi and API Credentials –––––
-char wifi_ssid[] = "2o25";
-char wifi_pass[] = "19o82oo2";
-String gemini_Key = "AIzaSyA7o-ItgG5ZCnYWIocnhMPJMuaWrBwp6fg";
+char wifi_ssid[] = "SSID";
+char wifi_pass[] = "Password";
+String gemini_Key = "Gemini_API_Key";
 
 //––––– Button Pin –––––
 const int buttonPin = 15;
