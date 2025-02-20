@@ -14,7 +14,8 @@ This repository contains various example implementations for the **LilyGo v1.6.2
   - Contains implementations utilizing **Gemini Vision API** for image processing.  
   - See the [vision/README.md](vision/README.md) for details.
 
-## **Setup & Usage**
-1. Clone the repository:
+## **Setup & Usage (Arduino IDE)**
+1. Open **Arduino IDE** and install the necessary board support for **ESP32-based LilyGo v1.6.2**.
+2. Download this repository as a ZIP or clone it:
    ```sh
    git clone https://github.com/trilochan-kumar/LilyGo-Cam-v1.6.2.git
