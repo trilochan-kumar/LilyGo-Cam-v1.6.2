@@ -16,7 +16,6 @@
 
 void setup() {
   Serial.begin(115200);
-  delay(1000); // Allow time for the serial monitor to open
 
   // Set up camera configuration
   camera_config_t config;
