@@ -81,9 +81,7 @@ void loop() {
   // Print the size of the captured JPEG frame (in bytes)
   Serial.printf("Captured frame: %u bytes\n", fb->len);
   
-  // (Optional: Process fb->buf as needed—for example, send over WiFi or save to SD card.)
-  
-  // Return the frame buffer so it can be reused
+  // Return the frame buffer
   esp_camera_fb_return(fb);
 
   // Wait for 5 seconds before capturing the next frame
