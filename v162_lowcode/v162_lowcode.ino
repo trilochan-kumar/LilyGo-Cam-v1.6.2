@@ -1,13 +1,11 @@
 /*
   Minimal code to capture a frame from the TTGO T-Camera V1.6.2.
+  
   This sketch mimics the official code by:
     - Defining the board model.
     - Including the official pin mapping from "select_pins.h".
     - Checking for PSRAM and selecting the frame size, JPEG quality,
       frame buffer count, and buffer location accordingly.
-  
-  When PSRAM is available, it uses UXGA resolution with two frame buffers
-  allocated in PSRAM. Otherwise, it falls back to QVGA.
 */
 
 #define CAMERA_MODEL_TTGO_T_CAMERA_V162  // Define the board model
